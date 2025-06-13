@@ -135,9 +135,9 @@ def main_task(config):
     from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
     role_worker_mapping = {
-        Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-        Role.Critic: ray.remote(CriticWorker),
-        Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
+        Role.ActorRollout: ActorRolloutRefWorker,
+        Role.Critic: CriticWorker,
+        Role.RefPolicy: ActorRolloutRefWorker
     }
 
     # NOTE: initialze two resource pool

@@ -1,0 +1,23 @@
+nohup: ignoring input
+Traceback (most recent call last):
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/runpy.py", line 196, in _run_module_as_main
+    return _run_code(code, main_globals, None,
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/runpy.py", line 86, in _run_code
+    exec(code, run_globals)
+  File "/home/ducati/projects/finalproject/rllm/scripts/data/rewrite_data_safe.py", line 9, in <module>
+    client = OpenAI(api_key="sk-5544778fa17f4b90b84b2a5527da77b1", base_url="https://api.deepseek.com")
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/openai/_client.py", line 144, in __init__
+    super().__init__(
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/openai/_base_client.py", line 854, in __init__
+    self._client = http_client or SyncHttpxClientWrapper(
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/openai/_base_client.py", line 784, in __init__
+    super().__init__(**kwargs)
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/httpx/_client.py", line 697, in __init__
+    self._mounts: dict[URLPattern, BaseTransport | None] = {
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/httpx/_client.py", line 700, in <dictcomp>
+    else self._init_proxy_transport(
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/httpx/_client.py", line 750, in _init_proxy_transport
+    return HTTPTransport(
+  File "/home/ducati/applications/miniconda3/envs/rllm/lib/python3.10/site-packages/httpx/_transports/default.py", line 191, in __init__
+    raise ImportError(
+ImportError: Using SOCKS proxy, but the 'socksio' package is not installed. Make sure to install httpx using `pip install httpx[socks]`.

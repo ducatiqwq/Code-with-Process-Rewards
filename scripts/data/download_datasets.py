@@ -4,22 +4,23 @@ import shutil
 
 # Define the Google Drive file IDs for the JSON files
 FILE_IDS = {
-    "train_taco.json": "1XpZYH9MP7N-YR9mCLCxs9181zedxivOU",
-    "olympiad.json": "1TxTUkXR5WIXS1586XbkrkfpKLEyHiNJS",
+    # "train_taco.json": "1XpZYH9MP7N-YR9mCLCxs9181zedxivOU",
+    # "olympiad.json": "1TxTUkXR5WIXS1586XbkrkfpKLEyHiNJS",
     "train_livecodebench.json": "1-lKdRfRjytdTltgLyAxTqVRoksI2cJfU",
-    "test_livecodebench.json": "1B0sotl48BLd4gqlitL5HVJf1cy3RxpEV",
-    "kodcode.json": "1STMAebzGjJtgl5OcOhG-4hjdAiLAWiY6",
-    "primeintellect.json": "1o-4P5fUBZd75PM9qfSXInPYXzfW5dfYm",
+    # "test_livecodebench.json": "1B0sotl48BLd4gqlitL5HVJf1cy3RxpEV",
+    # "kodcode.json": "1STMAebzGjJtgl5OcOhG-4hjdAiLAWiY6",
+    # "primeintellect.json": "1o-4P5fUBZd75PM9qfSXInPYXzfW5dfYm",
 }
 
 # Define the destination paths
 DEST_PATHS = {
-    "train_taco.json": os.path.expanduser("~/rllm/rllm/data/train/code/taco.json"),
-    "olympiad.json": os.path.expanduser("~/rllm/rllm/data/train/math/olympiad.json"),
-    "test_livecodebench.json": os.path.expanduser("~/rllm/rllm/data/test/code/livecodebench.json"),
-    "train_livecodebench.json": os.path.expanduser("~/rllm/rllm/data/train/code/livecodebench.json"),
-    "kodcode.json": os.path.expanduser("~/rllm/rllm/data/train/code/kodcode.json"),
-    "primeintellect.json": os.path.expanduser("~/rllm/rllm/data/train/code/primeintellect.json"),
+    # "train_taco.json": os.path.expanduser("~/rllm/rllm/data/train/code/taco.json"),
+    # "olympiad.json": os.path.expanduser("~/rllm/rllm/data/train/math/olympiad.json"),
+    # "test_livecodebench.json": "./rllm/data/test/code/livecodebench.json",
+    # "test_livecodebench.json": os.path.expanduser("~/rllm/rllm/data/test/code/livecodebench.json"),
+    "train_livecodebench.json": os.path.expanduser("~/projects/finalproject/rllm/rllm/data/train/code/livecodebench.json"),
+    # "kodcode.json": os.path.expanduser("~/rllm/rllm/data/train/code/kodcode.json"),
+    # "primeintellect.json": os.path.expanduser("~/rllm/rllm/data/train/code/primeintellect.json"),
 }
 
 # Create the necessary directories

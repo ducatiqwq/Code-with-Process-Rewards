@@ -15,6 +15,7 @@
 The main entry point to run the PPO algorithm
 """
 
+import ray
 import logging
 import os
 import warnings
@@ -69,6 +70,7 @@ def get_sharding_strategy(device_mesh):
     return sharding_strategy
 
 
+@ray.remote(max_restarts=10, max_task_retries=-1)
 class ActorRolloutRefWorker(Worker):
     """
     This worker can be instantiated as a standalone actor or a standalone rollout or a standalone reference policy
@@ -272,6 +274,8 @@ class ActorRolloutRefWorker(Worker):
             actor_lr_scheduler = None
 
         log_gpu_memory_usage('After actor optimizer init', logger=logger)
+        
+        print(actor_model_config)
 
         return actor_module_fsdp, actor_optimizer, actor_lr_scheduler, actor_model_config
 
@@ -521,7 +525,8 @@ class ActorRolloutRefWorker(Worker):
 
         # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
         # unshard the root FSDP module
-        self.ref_policy.actor_module._handle.reshard(True)
+        if self.world_size > 1:
+            self.ref_policy.actor_module._handle.reshard(True)
 
         torch.cuda.empty_cache()
         return output
@@ -556,6 +561,7 @@ class ActorRolloutRefWorker(Worker):
             offload_fsdp_param_and_grad(module=self.actor_module_fsdp, offload_grad=self._is_offload_grad)
 
 
+@ray.remote(max_restarts=10, max_task_retries=-1)
 class CriticWorker(Worker):
 
     def __init__(self, config):
@@ -1090,7 +1096,8 @@ class RewardModelWorker(Worker):
 
         # https://pytorch.org/docs/stable/notes/fsdp.html#fsdp-notes
         # unshard the root FSDP module
-        self.reward_module._handle.reshard(True)
+        if self.world_size > 1:
+            self.reward_module._handle.reshard(True)
 
         output = output.to('cpu')
         torch.cuda.empty_cache()

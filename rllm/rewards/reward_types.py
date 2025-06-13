@@ -19,10 +19,18 @@ class RewardConfig:
     cot_reward_weight: float = 0.0
     
     # General reward constants
-    correct_reward: float = 1.0
-    incorrect_reward: float = 0.0
-    format_error_reward: float = 0.0
+    correct_reward: float = 3.0
+    incorrect_reward: float = -1.0
+    format_error_reward: float = -4.0
     unk_error_reward: float = 0.0
+
+    # Custom rewards
+    step_incorrect_reward: float = -1.0
+    step_correct_reward: float = 1.0
+    step_aware_gae_lambda: float = 0.6
+    
+    soft_step_incorrect_reward: float = -0.3
+    final_incorrect_reward: float = -1.0
     
     # Bonus reward for calling tools.
     toolcall_bonus: float = 0.5
@@ -69,7 +77,7 @@ class RewardInput:
     #codetest
     metadata[['public_tests'] = { 
     { "input": [ "3\n((()))\n(())()\n()(()" ],
-	 "output": [ "YES\nYES\nNO" ] } }
+     "output": [ "YES\nYES\nNO" ] } }
 
     # apps/ TACO
     metadata[["input_output"] =  {

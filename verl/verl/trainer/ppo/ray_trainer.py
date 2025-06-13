@@ -126,7 +126,11 @@ def compute_advantage(data: DataProto, adv_estimator, gamma=1.0, lam=1.0, num_re
     # prepare response group
     # TODO: add other ways to estimate advantages
     if adv_estimator == 'gae':
-        values = data.batch['values']
+        if 'values' not in data.batch.keys():
+            # If critic is not used, make GAE the same as moving average
+            values = torch.zeros_like(data.batch['responses'], dtype=torch.float32)
+        else:
+            values = data.batch['values']
         responses = data.batch['responses']
         response_length = responses.size(-1)
         attention_mask = data.batch['attention_mask']
@@ -437,7 +441,11 @@ class RayPPOTrainer(object):
 
             # evaluate using reward_function
             # for certain reward function (e.g. sandbox), the generation can overlap with reward
-            reward_tensor = self.val_reward_fn(test_batch)
+            try:
+                reward_tensor = self.val_reward_fn(test_batch)
+            except Exception:
+                _ = {}
+                reward_tensor = self.val_reward_fn(test_batch, _)
 
             reward_tensor_lst.append(reward_tensor)
             data_source_lst.append(test_batch.non_tensor_batch.get('data_source', ['unknown'] * reward_tensor.shape[0]))
@@ -477,10 +485,12 @@ class RayPPOTrainer(object):
 
         # create critic
         if self.config.algorithm.adv_estimator == 'gae':
-            resource_pool = self.resource_pool_manager.get_resource_pool(Role.Critic)
-            critic_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.Critic], config=self.config.critic)
-            self.resource_pool_to_cls[resource_pool]['critic'] = critic_cls
-            self.use_critic = True
+            # NOTE: using GAE without critic is equivalent to a suffix sum over rewards
+            self.use_critic = False
+            # resource_pool = self.resource_pool_manager.get_resource_pool(Role.Critic)
+            # critic_cls = RayClassWithInitArgs(cls=self.role_worker_mapping[Role.Critic], config=self.config.critic)
+            # self.resource_pool_to_cls[resource_pool]['critic'] = critic_cls
+            # self.use_critic = True
         elif self.config.algorithm.adv_estimator == 'grpo':
             self.use_critic = False
         else:
@@ -620,7 +630,10 @@ class RayPPOTrainer(object):
                             batch = batch.union(reward_tensor)
                         
                         if not self.config.actor_rollout_ref.rollout.compute_reward:
-                            reward_tensor = self.reward_fn(batch)
+                            try:
+                                reward_tensor = self.reward_fn(batch)
+                            except Exception as e:
+                                reward_tensor = self.reward_fn(batch, metrics)
                             batch.batch['token_level_scores'] = reward_tensor
                         else:
                             reward_tensor = batch.batch['token_level_scores']
@@ -629,25 +642,6 @@ class RayPPOTrainer(object):
                         uids = batch.non_tensor_batch['uid']
                         unique_uids = np.unique(uids)
                         valid_mask = torch.ones(len(uids), dtype=torch.bool)
-                        solve_none = 0
-                        solve_all = 0
-                        for uid in unique_uids:
-                            uid_mask = uids == uid
-                            uid_rewards = reward_tensor[uid_mask].sum(-1)  # Sum rewards for each sequence
-                            
-                            # Check if all rewards are 0 or all are 1 for this uid
-                            if (uid_rewards == 0).all():
-                                valid_mask[uid_mask] = False
-                                solve_none += 1
-                            elif (uid_rewards == 1).all():
-                                valid_mask[uid_mask] = False
-                                solve_all += 1
-                        
-                        # Log to metrics
-                        metrics['batch/solve_none'] = solve_none
-                        metrics['batch/solve_all'] = solve_all
-                        metrics['batch/solve_partial'] = len(unique_uids) - solve_none - solve_all
-
 
                         if self.config.trainer.rejection_sample:
                             # If no valid samples remain, skip this batch and get a new one

@@ -10,10 +10,13 @@ import time
 from multiprocessing import Manager
 from typing import List, Dict, Union
 import random
-import ast 
+import ast
+import logging
 
 #from rllm.rewards.code_utils.code_contests import run_test as code_contests_run_test
+from rllm.rewards.code_utils.custom import postprocess_code, get_task_rewards, get_token_rewards
 from rllm.rewards.code_utils.livecodebench import run_test as lcb_run_test
+from rllm.rewards.code_utils.livecodebench import run_test_for_data as lcb_run_test_for_data
 from rllm.rewards.code_utils.codeforces import run_test as codeforces_run_test
 #from rllm.rewards.code_utils.swebench import swebench_check_correctness
 from rllm.rewards.code_utils.humanevalplus import run_test as humanevalplus_run_test, get_num_test_cases
@@ -34,7 +37,7 @@ def extract_code_from_model(model_response: str):
         str: The extracted code, or an empty string if no code block is found.
     """
     code_blocks = re.findall(r"```(?:\w+)?\n(.*?)```", model_response, re.DOTALL)
-    if not code_blocks:
+    if len(code_blocks) != 1:
         return None
     return code_blocks[-1].strip()
 
@@ -66,6 +69,124 @@ def clean_code_main_block(code: str) -> str:
         filtered_lines.append(line)
 
     return '\n'.join(filtered_lines)
+
+
+# import threading
+# lock = threading.Lock()
+
+
+def custom_compute_reward(sample, generation: str, *, config: RewardConfig, original_data, response_ids, tokenizer, timeout=6, debug=False):
+    """
+    Custom function to compute rewards based on test cases and code.
+
+    Args:
+        tests: List of test cases
+        code: Generated code to test
+        response_ids: Model response before decoding (thus response_ids is the tokenized version of the model response)
+
+    Returns:
+        list: The advantages
+    """
+    assert len(sample) >= 1, "Sample must contain at least one test case"
+    sample = postprocess_lcb_sample(sample)
+    code, tasks = postprocess_code(original_data, generation)
+
+    if code == "":
+        # with lock:
+            # print("=" * 50)
+            # print("No code found in model response")
+            # print(generation)
+            # print(tasks)
+            # print("=" * 50 + "\n")
+        return RewardOutput(reward=config.format_error_reward, is_correct=False), 1
+
+    manager = multiprocessing.Manager()
+    result = manager.list()
+    metadata_list = manager.list()
+
+    def _temp_run(sample, code, debug, result, metadata_list, timeout):
+        res, metadata = lcb_run_test(sample, test=code, debug=debug, timeout=timeout)
+        result.append(res)
+        metadata_list.append(metadata)
+
+    p = multiprocessing.Process(
+        target=_temp_run,
+        args=(sample, code, debug, result, metadata_list, timeout),
+    )
+    p.start()
+    p.join(
+        timeout=(timeout + 1) * len(json.loads(sample["input_output"])["inputs"]) + 5
+    )
+    if p.is_alive():
+        p.kill()
+    if not result:
+        # with lock:
+        #     print("=" * 50)
+        #     print("global failure")
+        #     print(generation)
+        #     _code = code.replace('\\', '\\\\').replace('"', '\\"').replace('\n', '\\n').replace('\t', '\\t').replace('\r', '\\r')
+        #     print(_code)
+        #     print("=" * 50 + "\n")
+        return RewardOutput(reward=config.incorrect_reward, is_correct=False), 2
+
+    res = result[0]
+    metadata = metadata_list[0]
+
+    # with lock:
+        # print(res)
+        # print(metadata)
+    
+    if all(x == True for x in res):
+        # with lock:
+        #     print("=" * 50)
+        #     print("All tests passed")
+        #     print(generation)
+        #     print("=" * 50 + "\n")
+        return RewardOutput(reward=config.correct_reward, is_correct=True), 3
+
+    else:
+        # with lock:
+            # print("=" * 50)
+            # print(generation)
+            # print("Tasks:", tasks)
+            # print("Metadata:", metadata)
+            # print("=" * 50 + "\n")
+
+        try:
+            output = metadata["output"]
+            gt_output = metadata["expected"]
+            
+            task_level_rewards = get_task_rewards(output, gt_output, tasks, config)
+            token_level_rewards = get_token_rewards(response_ids, tasks, task_level_rewards, tokenizer)
+
+            # with lock:
+            #     print("=" * 50)
+            #     print("Output:", output)
+            #     print("Ground Truth Output:", gt_output)
+            #     print("Task Level Rewards:", task_level_rewards)
+            #     print("Token Level Rewards:", token_level_rewards)
+            #     print("=" * 50 + "\n")
+
+            # This only works with value=0 & gae_lambda=1.
+            for i in range(1, len(token_level_rewards)):
+                token_level_rewards[i - 1] -= token_level_rewards[i]
+            
+            if any(x == True for x in res):
+                # If at least one task passed, we return the token level rewards
+                # with a status of 4 to indicate partial correctness
+                # with lock:
+                #     print("=" * 50)
+                #     print("Partial correctness")
+                #     print(generation)
+                #     print("=" * 50 + "\n")
+                correct_ratio = sum(res) / len(res)
+                assert 0 <= correct_ratio < 1
+                return token_level_rewards, 6 + correct_ratio
+            return token_level_rewards, 4
+
+        except Exception as e:
+            return RewardOutput(reward=config.incorrect_reward, is_correct=False), 5
+
 
 
 def check_correctness(tests: Union[List[Dict[str, str]], Dict[str, List[str]]], code: str, test_fn, timeout_per_test: int = 12, max_tests: int = 15) -> bool:
@@ -174,6 +295,7 @@ def primeintellect_check_correctness(tests, code):
         tests['fn_name'] = fn_name
     return check_correctness(tests, code, taco_run_test)
 
+
 def lcb_check_correctness_v2(sample, generation, timeout=6, debug=False):
     """Check correctness of code generation with a global timeout.
     The global timeout is to catch some extreme/rare cases not handled by the timeouts
@@ -184,8 +306,7 @@ def lcb_check_correctness_v2(sample, generation, timeout=6, debug=False):
     manager = multiprocessing.Manager()
     result = manager.list()
     metadata_list = manager.list()
-
-
+    
     def _temp_run(sample, generation, debug, result, metadata_list, timeout):
         res, metadata = lcb_run_test(sample, test=generation, debug=debug, timeout=timeout)
         result.append(res)
@@ -209,9 +330,46 @@ def lcb_check_correctness_v2(sample, generation, timeout=6, debug=False):
             print(f"global timeout")
     if not result:
         return False
-    # print(result[0], metadata_list)
     # Check if all elements in result[0] are True
-    return all(x == True for x in result[0])
+    return all(x == True for x in result[0]), metadata_list[0]
+
+
+def lcb_check_correctness_v2_for_data(sample, generation, timeout=6, debug=False):
+    """Check correctness of code generation with a global timeout.
+    The global timeout is to catch some extreme/rare cases not handled by the timeouts
+    inside `run_test`"""
+    assert len(sample) >= 1, "Sample must contain at least one test case"
+    sample = postprocess_lcb_sample(sample)
+
+    manager = multiprocessing.Manager()
+    result = manager.list()
+    metadata_list = manager.list()
+    
+    def _temp_run(sample, generation, debug, result, metadata_list, timeout):
+        res, metadata =  lcb_run_test_for_data(sample, test=generation, debug=debug, timeout=timeout)
+        result.append(res)
+        metadata_list.append(metadata)
+
+    p = multiprocessing.Process(
+        target=_temp_run,
+        args=(sample, generation, debug, result, metadata_list, timeout),
+    )
+    p.start()
+    p.join(
+        timeout=(timeout + 1) * len(json.loads(sample["input_output"])["inputs"]) + 5
+    )
+    if p.is_alive():
+        p.kill()
+    if not result:
+        in_outs = json.loads(sample["input_output"])
+        # consider that all tests failed
+        result = [[-1 for i in range(len(in_outs["inputs"]))]]
+        if debug:
+            print(f"global timeout")
+    if not result:
+        return False
+    # Check if all elements in result[0] are True
+    return all(x == True for x in result[0]), metadata_list[0]
 
 
 def leetcode_check_correctness(tests: List[Dict[str, str]], code: str) -> bool:
@@ -277,6 +435,7 @@ def humanevalplus_check_correctness(test: str, code: str, timeout_per_test: int 
         print(f"Error in code execution: {output}")
     return succ
 
+
 class RewardCodeFn(RewardFn):
     """
     Reward function for evaluating code dataset answers.
@@ -284,7 +443,7 @@ class RewardCodeFn(RewardFn):
     This class implements the __call__ method to process the input and determine
     the reward based on the correctness of the unit tests provided
     """
-    def __call__(self, input: RewardInput) -> RewardOutput:
+    def __call__(self, input: RewardInput, **kwargs):
         total_start_time = time.time()
 
         assert input.problem_type == RewardType.CODE, \
@@ -297,15 +456,38 @@ class RewardCodeFn(RewardFn):
         tests = metadata
         if tests is None:
             print("No tests found in metadata")
-            return RewardOutput(reward=self.config.format_error_reward, is_correct=False)
+            return RewardOutput(reward=self.config.format_error_reward, is_correct=False), -1
 
         model_code = extract_code_from_model(model_response)
         if model_code is None:
             # print("No code found in model response")
-            return RewardOutput(reward=self.config.format_error_reward, is_correct=False)
+            return RewardOutput(reward=self.config.format_error_reward, is_correct=False), 0
 
         # Tests: List[Dictionary] - Codeforces, LiveCodeBench
         # Tests: Dictionary[Lists] - CodeContests, Taco/Apps
+        if dataset_name == "finalproject":
+            rewards, status = custom_compute_reward(tests,
+                                                    model_code,
+                                                    config=self.config,
+                                                    original_data=kwargs["original_data"],
+                                                    response_ids=kwargs["response_ids"],
+                                                    tokenizer=kwargs["tokenizer"],
+                                                    debug=False)
+            
+            # find if there is <think> ... </think> in the model response
+            if status > 1:
+                think_pattern = r"<think>(.*?)</think>"
+                think_matches = re.findall(think_pattern, model_response, re.DOTALL)
+                if think_matches:
+                    think_reward = 0.3
+                    if isinstance(rewards, list):
+                        rewards[-1] += think_reward  # Add think reward to the last token]
+                    else:
+                        rewards.reward += think_reward
+                    status += 10
+            
+            return rewards, status
+
         is_correct = False
         if dataset_name in ["taco", "apps", "code_contests"]:
             test_fn = taco_run_test
@@ -380,6 +562,7 @@ if __name__ == "__main__":
             data_source=data_source,
             model_response=llm_solution,
             metadata=ground_truth
-        ))
-    return reward_response.is_correct
-  
+        ),
+        **kwargs
+    )
+    return reward_response

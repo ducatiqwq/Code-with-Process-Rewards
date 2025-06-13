@@ -103,6 +103,7 @@ def compute_gae_advantage_return(token_level_rewards: torch.Tensor, values: torc
         advantages = torch.stack(advantages_reversed[::-1], dim=1)
 
         returns = advantages + values
+        # NOTE: How should we treat the normalization of advantages?
         advantages = verl_F.masked_whiten(advantages, eos_mask)
     return advantages, returns
 

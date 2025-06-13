@@ -34,7 +34,8 @@ import_string = BASE_IMPORTS
 #"from string import *\nfrom re import *\nfrom datetime import *\nfrom collections import *\nfrom heapq import *\nfrom bisect import *\nfrom copy import *\nfrom math import *\nfrom random import *\nfrom statistics import *\nfrom itertools import *\nfrom functools import *\nfrom operator import *\nfrom io import *\nfrom sys import *\nfrom json import *\nfrom builtins import *\nfrom typing import *\nimport string\nimport re\nimport datetime\nimport collections\nimport heapq\nimport bisect\nimport copy\nimport math\nimport random\nimport statistics\nimport itertools\nimport functools\nimport operator\nimport io\nimport sys\nimport json\nsys.setrecursionlimit(50000)\n"
 
 
-def truncatefn(s, length=300):
+# NOTE: Truncation is currently disabled.
+def truncatefn(s, length=2147483647):
     if isinstance(s, str):
         pass
     else:
@@ -300,46 +301,99 @@ def grade_stdio(
         return
 
     all_results = []
+    metadata_list = []
     total_execution_time = 0
     for idx, (gt_inp, gt_out) in enumerate(zip(all_inputs, all_outputs)):
         signal.alarm(timeout)
         faulthandler.enable()
 
         signal.alarm(timeout)
-        with Capturing() as captured_output:
-            try:
+        try:
+            with Capturing() as captured_output:
+                # Add timeout handler before setting the alarm
                 start = time.time()
                 call_method(method, gt_inp)
                 total_execution_time += time.time() - start
                 # reset the alarm
                 signal.alarm(0)
-            except Exception as e:
-                signal.alarm(0)
-                if "timeoutexception" in repr(e).lower():
-                    all_results.append(-3)
-                    return all_results, {
-                        "error": repr(e),
-                        "error_code": -3,
-                        "error_message": "Time Limit Exceeded",
-                        "inputs": truncatefn(gt_inp),
-                        "expected": truncatefn(gt_out),
-                    }
-                else:
-                    all_results.append(-4)
-                    return all_results, {
-                        "error": repr(e),
-                        "error_code": -4,
-                        "error_message": "Runtime Error",
-                        "inputs": truncatefn(gt_inp),
-                        "expected": truncatefn(gt_out),
-                    }
+        
+        except Exception as e:
+            signal.alarm(0)
+            prediction = captured_output[0]
+            if "timeoutexception" in repr(e).lower():
+                all_results.append(-3)
+                return all_results, {
+                    "error": repr(e),
+                    "error_code": -3,
+                    "error_message": "Time Limit Exceeded",
+                    "output": truncatefn(prediction),
+                    "inputs": truncatefn(gt_inp),
+                    "expected": truncatefn(gt_out),
+                }
+            else:
+                all_results.append(-4)
+                return all_results, {
+                    "error": repr(e),
+                    "error_code": -4,
+                    "error_message": "Runtime Error",
+                    "output": truncatefn(prediction),
+                    "inputs": truncatefn(gt_inp),
+                    "expected": truncatefn(gt_out),
+                }
 
-            finally:
-                signal.alarm(0)
-                faulthandler.disable()
+        finally:
+            signal.alarm(0)
+            faulthandler.disable()
+
+        def process_prediction(prediction: str):
+            """
+            Check if prediction can be partitioned to multiple fragments of "<any string>...</the same string as before>",
+            extract all ... content to form a list, then return the last string from the list.
+            """
+            if not prediction:
+                return prediction
+            
+            extracted_content = []
+            i = 0
+            
+            while i < len(prediction):
+                # Look for opening delimiter starting with '<'
+                if prediction[i] == '<':
+                    # Find the closing '>' for the opening delimiter
+                    delimiter_end = prediction.find('>', i)
+                    if delimiter_end == -1:
+                        return
+                    
+                    opening_delimiter = f"{prediction[i]}/{prediction[i + 1: delimiter_end + 1]}"
+                    
+                    # Look for the "..." part after the opening delimiter
+                    content_start = delimiter_end + 1
+                    
+                    # Look for the closing delimiter (same as opening)
+                    closing_pos = prediction.find(opening_delimiter, content_start)
+                    if closing_pos == -1:
+                        return
+                    
+                    # Extract the content between the delimiters
+                    content = prediction[content_start:closing_pos]
+                    extracted_content.append(content)
+                    
+                    # Move past the closing delimiter
+                    i = closing_pos + len(opening_delimiter)
+                else:
+                    i += 1
+            
+            if extracted_content:
+                # Return the last extracted content
+                return extracted_content[-1]
+            else:
+                return
 
         prediction = captured_output[0]
-
+        # _prediction = captured_output[0]
+        # prediction = process_prediction(_prediction)
+        if not prediction:
+            return
         stripped_prediction_lines = get_stripped_lines(prediction)
         stripped_gt_out_lines = get_stripped_lines(gt_out)
 
@@ -347,6 +401,7 @@ def grade_stdio(
         ## so cache the return to make it clean!
         WA_send_args = {
             "output": truncatefn(prediction),
+            # "output": truncatefn(_prediction),
             "inputs": truncatefn(gt_inp),
             "expected": truncatefn(gt_out),
             "error_code": -2,
@@ -392,8 +447,181 @@ def grade_stdio(
             all_results.append(-2)
             return all_results, WA_send_args
         all_results.append(True)
+        # metadata_list.append(WA_send_args)
 
     return all_results, {"execution time": total_execution_time}
+    # return all_results, metadata_list
+
+
+def grade_stdio_for_data(
+    code: str,
+    all_inputs: list,
+    all_outputs: list,
+    timeout: int,
+):
+    ## runtime doesn't interact well with __name__ == '__main__'
+    code = clean_if_name(code)
+
+    ## we wrap the given code inside another function
+    code = make_function(code)
+
+    compiled_sol = compile_code(code, timeout)
+    if compiled_sol is None:
+        return
+
+    method = get_function(compiled_sol, "wrapped_function")
+
+    if method is None:
+        return
+
+    all_results = []
+    metadata_list = []
+    total_execution_time = 0
+    for idx, (gt_inp, gt_out) in enumerate(zip(all_inputs, all_outputs)):
+        signal.alarm(timeout)
+        faulthandler.enable()
+
+        signal.alarm(timeout)
+        try:
+            with Capturing() as captured_output:
+                # Add timeout handler before setting the alarm
+                start = time.time()
+                call_method(method, gt_inp)
+                total_execution_time += time.time() - start
+                # reset the alarm
+                signal.alarm(0)
+        
+        except Exception as e:
+            signal.alarm(0)
+            prediction = captured_output[0]
+            if "timeoutexception" in repr(e).lower():
+                all_results.append(-3)
+                return all_results, {
+                    "error": repr(e),
+                    "error_code": -3,
+                    "error_message": "Time Limit Exceeded",
+                    "output": truncatefn(prediction),
+                    "inputs": truncatefn(gt_inp),
+                    "expected": truncatefn(gt_out),
+                }
+            else:
+                all_results.append(-4)
+                return all_results, {
+                    "error": repr(e),
+                    "error_code": -4,
+                    "error_message": "Runtime Error",
+                    "output": truncatefn(prediction),
+                    "inputs": truncatefn(gt_inp),
+                    "expected": truncatefn(gt_out),
+                }
+
+        finally:
+            signal.alarm(0)
+            faulthandler.disable()
+
+        def process_prediction(prediction: str):
+            """
+            Check if prediction can be partitioned to multiple fragments of "<any string>...</the same string as before>",
+            extract all ... content to form a list, then return the last string from the list.
+            """
+            if not prediction:
+                return prediction
+            
+            extracted_content = []
+            i = 0
+            
+            while i < len(prediction):
+                # Look for opening delimiter starting with '<'
+                if prediction[i] == '<':
+                    # Find the closing '>' for the opening delimiter
+                    delimiter_end = prediction.find('>', i)
+                    if delimiter_end == -1:
+                        return
+                    
+                    opening_delimiter = f"{prediction[i]}/{prediction[i + 1: delimiter_end + 1]}"
+                    
+                    # Look for the "..." part after the opening delimiter
+                    content_start = delimiter_end + 1
+                    
+                    # Look for the closing delimiter (same as opening)
+                    closing_pos = prediction.find(opening_delimiter, content_start)
+                    if closing_pos == -1:
+                        return
+                    
+                    # Extract the content between the delimiters
+                    content = prediction[content_start:closing_pos]
+                    extracted_content.append(content)
+                    
+                    # Move past the closing delimiter
+                    i = closing_pos + len(opening_delimiter)
+                else:
+                    i += 1
+            
+            if extracted_content:
+                # Return the last extracted content
+                return extracted_content[-1]
+            else:
+                return
+
+        _prediction = captured_output[0]
+        prediction = process_prediction(_prediction)
+        if not prediction:
+            return
+        stripped_prediction_lines = get_stripped_lines(prediction)
+        stripped_gt_out_lines = get_stripped_lines(gt_out)
+
+        ## WA happens in multiple circumstances
+        ## so cache the return to make it clean!
+        WA_send_args = {
+            "output": truncatefn(_prediction),
+            "inputs": truncatefn(gt_inp),
+            "expected": truncatefn(gt_out),
+            "error_code": -2,
+        }
+
+        if len(stripped_prediction_lines) != len(stripped_gt_out_lines):
+            all_results.append(-2)
+            WA_send_args["error_message"] = "Wrong answer: mismatched output length"
+            return all_results, WA_send_args
+
+        for output_line_idx, (
+            stripped_prediction_line,
+            stripped_gt_out_line,
+        ) in enumerate(zip(stripped_prediction_lines, stripped_gt_out_lines)):
+            WA_send_args["error_message"] = (
+                f"Wrong answer at {output_line_idx=}: {truncatefn(stripped_prediction_line)} != {truncatefn(stripped_gt_out_line)}"
+            )
+
+            ## CASE 1: exact match
+            if stripped_prediction_line == stripped_gt_out_line:
+                continue
+
+            ## CASE 2: element-wise comparision
+            ## if there are floating elements
+            ## use `decimal` library for good floating point comparision
+            ## otherwise gotcha: np.isclose(50000000000000000, 50000000000000001) = True
+            ## note that we should always be able to convert to decimals
+
+            success, decimal_prediction_line = convert_line_to_decimals(
+                stripped_prediction_line
+            )
+            if not success:
+                all_results.append(-2)
+                return all_results, WA_send_args
+            success, decimal_gtout_line = convert_line_to_decimals(stripped_gt_out_line)
+            if not success:
+                all_results.append(-2)
+                return all_results, WA_send_args
+
+            if decimal_prediction_line == decimal_gtout_line:
+                continue
+
+            all_results.append(-2)
+            return all_results, WA_send_args
+        all_results.append(True)
+        metadata_list.append(WA_send_args)
+
+    return all_results, metadata_list
 
 
 def run_test(sample, test=None, debug=False, timeout=6):
@@ -461,6 +689,86 @@ def run_test(sample, test=None, debug=False, timeout=6):
             signal.alarm(timeout)
             try:
                 results, metadata = grade_stdio(
+                    code=test,
+                    all_inputs=in_outs["inputs"],
+                    all_outputs=in_outs["outputs"],
+                    timeout=timeout,
+                )
+                return results, metadata
+            except Exception as e:
+                return [-4], {
+                    "error_code": -4,
+                    "error_message": f"Error during testing: {e}",
+                }
+            finally:
+                signal.alarm(0)
+
+
+def run_test_for_data(sample, test=None, debug=False, timeout=6):
+    """
+    if test(generated_code) is not None it'll try to run the code.
+    otherwise it'll just return an input and output pair.
+    """
+    signal.signal(signal.SIGALRM, timeout_handler)
+
+    # Disable functionalities that can make destructive changes to the test.
+    # max memory is set to 4GB
+    reliability_guard()
+
+    if debug:
+        print(f"start = {datetime.now().time()}")
+
+    try:
+        in_outs = json.loads(sample["input_output"])
+    except ValueError as e:
+        raise e
+        in_outs = None
+
+    if in_outs:
+        if in_outs.get("fn_name") is None:
+            which_type = CODE_TYPE.standard_input  # Standard input
+            method_name = None
+        else:
+            which_type = CODE_TYPE.call_based  # Call-based
+            method_name = in_outs["fn_name"]
+
+    if debug:
+        print(f"loaded input_output = {datetime.now().time()}")
+
+    if test is None:
+        assert False, "should not happen: test code is none"
+        return in_outs, {"error": "no test code provided"}
+    elif test is not None:
+        results = []
+        sol = import_string
+        if debug:
+            print(f"loading test code = {datetime.now().time()}")
+
+        if which_type == CODE_TYPE.call_based:
+            signal.alarm(timeout)
+            try:
+                results, metadata = grade_call_based(
+                    code=test,
+                    all_inputs=in_outs["inputs"],
+                    all_outputs=in_outs["outputs"],
+                    fn_name=method_name,
+                    timeout=timeout,
+                )
+                return results, metadata
+            except Exception as e:
+                return [-4], {
+                    "error_code": -4,
+                    "error_message": f"Error during testing: {e}",
+                }
+            finally:
+                signal.alarm(0)
+        elif which_type == CODE_TYPE.standard_input:
+            # sol
+            # if code has if __name__ == "__main__": then remove it
+
+            signal.alarm(timeout)
+            try:
+                results, metadata = grade_stdio_for_data(
                     code=test,
                     all_inputs=in_outs["inputs"],
                     all_outputs=in_outs["outputs"],

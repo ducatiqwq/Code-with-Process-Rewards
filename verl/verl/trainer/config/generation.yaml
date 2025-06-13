@@ -1,6 +1,6 @@
 trainer:
   nnodes: 1
-  n_gpus_per_node: 8
+  n_gpus_per_node: 2
 
 data:
   path: ~/data/rlhf/math/test.parquet
@@ -13,8 +13,14 @@ data:
   batch_size: 2048
 
 model:
-  path: ~/models/Qwen2-7B-Instruct
+  path: /home/ducati/projects/finalproject/rllm/checkpoints/deepcoder/1.5b-4k-gae-code/actor/global_step_24
   external_lib: null
+  stage1:
+    path: /root/autodl-tmp/ckpt/checkpoint-99
+    external_lib: null
+  stage2:
+    path: /home/ducati/projects/finalproject/rllm/checkpoints/deepcoder/1.5b-4k-gae-code/actor/global_step_24
+    external_lib: null
 
 rollout:
   name: vllm
@@ -22,7 +28,7 @@ rollout:
   top_k: -1 # 0 for hf rollout, -1 for vllm rollout
   top_p: 0.95
   prompt_length: 2048
-  response_length: 32768
+  response_length: 4096
   # for vllm rollout
   dtype: bfloat16 # should align with FSDP
   gpu_memory_utilization: 0.9

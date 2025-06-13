@@ -19,6 +19,8 @@ from verl import DataProto
 import torch
 from verl.utils.reward_score import gsm8k, math
 from verl.trainer.ppo.ray_trainer import RayPPOTrainer
+from rllm.rewards.reward_types import RewardOutput
+from typing import Dict, Any
 
 
 from rllm.rewards.rl_reward import rllm_reward_fn
@@ -40,7 +42,7 @@ class RewardManager():
         self.tokenizer = tokenizer
         self.num_examine = num_examine  # the number of batches of decoded responses to print to the console
 
-    def __call__(self, data: DataProto):
+    def __call__(self, data: DataProto, metrics: Dict[str, Any]) -> torch.Tensor:
         """We will expand this function gradually based on the available datasets"""
 
         # If there is rm score, we directly return rm score. Otherwise, we compute via rm_score_fn
@@ -70,7 +72,10 @@ class RewardManager():
             valid_response_ids = response_ids[:valid_response_length]
 
             # decode
-            sequences = torch.cat((valid_prompt_ids, valid_response_ids))
+            # NOTE: Originally the concatenation of (valid_prompt_ids, valid_response_ids) was decoded.
+            # NOTE: This led to complexity in reward assignment. So we edited the code to decode only the response.
+            # sequences = torch.cat((valid_prompt_ids, valid_response_ids))
+            sequences = valid_response_ids
             sequences_str = self.tokenizer.decode(sequences)
 
             ground_truth = data_item.non_tensor_batch['reward_model']['ground_truth']
@@ -78,16 +83,15 @@ class RewardManager():
             # select rm_score
             data_source = data_item.non_tensor_batch['data_source']
             compute_score_fn = _select_rm_score_fn(data_source)
-            score = compute_score_fn(data_source=data_source, llm_solution=sequences_str, ground_truth=ground_truth)
             
-            # with print_lock:
-            #     if data_source not in already_print_data_sources:
-            #         already_print_data_sources[data_source] = 0
-
-            #     if already_print_data_sources[data_source] < self.num_examine:
-            #         already_print_data_sources[data_source] += 1
-            #         print(sequences_str)      
-            return i, score, valid_response_length
+            result = compute_score_fn(data_source=data_source,
+                                      llm_solution=sequences_str,
+                                      ground_truth=ground_truth,
+                                      response_ids=valid_response_ids,
+                                      original_data=data_item.non_tensor_batch,
+                                      tokenizer=self.tokenizer)
+             
+            return i, result, valid_response_length
 
         # Process items in parallel using ThreadPoolExecutor
         with ThreadPoolExecutor(max_workers=48) as executor:
@@ -95,8 +99,46 @@ class RewardManager():
             results = list(executor.map(process_item, args))
 
         # Fill reward tensor with results
-        for i, score, valid_response_length in results:
-            reward_tensor[i, valid_response_length - 1] = score
+        for i, result, valid_response_length in results:
+            if isinstance(result, RewardOutput):
+                reward_tensor[i, valid_response_length - 1] = result.reward
+                # is_correct = result.is_correct
+                
+            elif isinstance(result, tuple):
+                score, status = result
+                if isinstance(score, list):
+                    assert len(score) == valid_response_length
+                    reward_tensor[i, :len(score)] = torch.tensor(score, dtype=torch.float32)
+                else:
+                    reward_tensor[i, valid_response_length - 1] = score.reward
+                    
+                status_key = f"batch/train_status_{int(status)}"
+                if status_key not in metrics:
+                    metrics[status_key] = 0
+                metrics[status_key] += 1 / len(data)
+                
+                if status == 3 or status == 13:
+                    status_key = "batch/accuracy"
+                    if status_key not in metrics:
+                        metrics[status_key] = 0
+                    metrics[status_key] += 1 / len(data)
+                    status_key = "batch/partial_accuracy"
+                    if status_key not in metrics:
+                        metrics[status_key] = 0
+                    metrics[status_key] += 1 / len(data)
+                
+                elif 6 <= status < 7:
+                    acc_ratio = status - 6
+                    status_key = "batch/partial_accuracy"
+                    if status_key not in metrics:
+                        metrics[status_key] = 0
+                    metrics[status_key] += acc_ratio / len(data)
+            
+            else:
+                try:
+                    reward_tensor[i, valid_response_length - 1] = float(result)
+                except Exception as e:
+                    print(f"Error processing result for index {i}: {e}")
 
         return reward_tensor
 
@@ -107,6 +149,16 @@ import hydra
 
 @hydra.main(config_path='config', config_name='ppo_trainer', version_base=None)
 def main(config):
+    ray.init(
+        _system_config={
+            "grpc_keepalive_timeout_ms": 600000,
+            "grpc_server_retry_timeout_milliseconds": 600000,
+            "gcs_rpc_server_reconnect_timeout_s": 600,
+            "gcs_rpc_server_connect_timeout_s": 600,
+            "core_worker_rpc_server_reconnect_timeout_s": 600,
+            "grpc_client_keepalive_timeout_ms": 600000,
+        }
+    )
     if not ray.is_initialized():
         # this is for local ray cluster
         ray.init(runtime_env={'env_vars': {'TOKENIZERS_PARALLELISM': 'true', 'NCCL_DEBUG': 'WARN'}})
@@ -151,9 +203,9 @@ def main_task(config):
     from verl.trainer.ppo.ray_trainer import ResourcePoolManager, Role
 
     role_worker_mapping = {
-        Role.ActorRollout: ray.remote(ActorRolloutRefWorker),
-        Role.Critic: ray.remote(CriticWorker),
-        Role.RefPolicy: ray.remote(ActorRolloutRefWorker)
+        Role.ActorRollout: ActorRolloutRefWorker,
+        Role.Critic: CriticWorker,
+        Role.RefPolicy: ActorRolloutRefWorker
     }
 
     global_pool_id = 'global_pool'

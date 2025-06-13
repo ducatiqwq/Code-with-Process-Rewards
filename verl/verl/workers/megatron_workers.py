@@ -60,6 +60,7 @@ def set_random_seed(seed):
     # os.environ['CUBLAS_WORKSPACE_CONFIG'] = ':4096:8'
 
 
+@ray.remote(max_restarts=10, max_task_retries=-1)
 class ActorRolloutRefWorker(MegatronWorker):
     """
     This worker can be instantiated as a standalone actor or a standalone rollout or a standalone reference policy
@@ -405,6 +406,7 @@ class ActorRolloutRefWorker(MegatronWorker):
         pass
 
 
+@ray.remote(max_restarts=10, max_task_retries=-1)
 class CriticWorker(MegatronWorker):
 
     def __init__(self, config):

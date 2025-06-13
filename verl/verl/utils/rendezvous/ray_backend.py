@@ -21,7 +21,7 @@ import ray
 from ray.util import list_named_actors
 
 
-@ray.remote
+@ray.remote(max_restarts=10, max_task_retries=-1)
 class NCCLIDStore:
 
     def __init__(self, nccl_id):

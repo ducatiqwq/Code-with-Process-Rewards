@@ -6,9 +6,9 @@ export VLLM_ATTENTION_BACKEND=XFORMERS
 MODEL_PATH="$HOME/DeepScaleR-1.5B-Preview"
 # Possible values: aime, amc, math, minerva, olympiad_bench
 DATATYPES=("aime")
-OUTPUT_DIR="$HOME"  # Add default output directory
+OUTPUT_DIR="/root/autodl-tmp/outputs"  # Add default output directory
 N_PASSES=1  # Add default number of passes
-MAX_LENGTH=32768  # Default max response length
+MAX_LENGTH=4096  # Default max response length
 TP_SIZE=1  # Default tensor parallel size
 
 # Parse named arguments
@@ -61,13 +61,13 @@ echo "Tensor Parallel Size: ${TP_SIZE}"
 
 # Loop through all datatypes
 for DATA_TYPE in "${DATATYPES[@]}"; do
-    python3 -m verl.trainer.main_generation \
+    python3 -m verl.trainer.main_generation_twosteps \
         trainer.nnodes=1 \
-        trainer.n_gpus_per_node=8 \
-        data.path=$HOME/rllm/data/${DATA_TYPE}.parquet \
+        trainer.n_gpus_per_node=2 \
+        data.path=/home/ducati/projects/finalproject/rllm/data/test_livecodebench.json \
         data.output_path=${OUTPUT_DIR}/${DATA_TYPE}.parquet \
         data.n_samples=${N_PASSES} \
-        data.batch_size=2048 \
+        data.batch_size=32 \
         model.path=${MODEL_PATH} \
         rollout.temperature=0.6 \
         rollout.response_length=${MAX_LENGTH} \
